@@ -1,0 +1,132 @@
+version: '3'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - ./mongo_data:/data/db
+
+  zookeeper:
+    image: wurstmeister/zookeeper:3.4.6
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  broker:
+    image: confluentinc/cp-kafka:latest
+    container_name: broker
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://broker:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+
+  discovery-server:
+    image: toto1000/discovery-server:latest
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+
+  api-gateway:
+    image: toto1000/api-gateway:latest
+    container_name: api-gateway
+    ports:
+      - "8181:8080"
+    expose:
+      - "8181"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=TRACE
+    depends_on:
+      - zipkin
+      - discovery-server
+
+  product-service:
+    container_name: product-service
+    image: toto1000/product-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+  order-service:
+    container_name: order-service
+    image: toto1000/order-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-order:3306/order-service # Updated MySQL URL
+    depends_on:
+      - zipkin
+      - discovery-server
+      - api-gateway
+      - broker
+      - mysql-order # Added dependency on mysql-order service
+
+  inventory-service:
+    container_name: inventory-service
+    image: toto1000/inventory-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-inventory:3306/inventory-service # Updated MySQL URL
+    depends_on:
+      - discovery-server
+      - api-gateway
+      - mysql-inventory # Added dependency on mysql-inventory service
+
+  notification-service:
+    container_name: notification-service
+    image: toto1000/notification-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+      - discovery-server
+      - api-gateway
+      - broker
+
+  mysql-order: # MySQL service for order-service
+    image: mysql:latest
+    container_name: mysql-order
+    environment:
+      MYSQL_ROOT_PASSWORD: toto123
+      MYSQL_DATABASE: order-service
+    ports:
+      - "3307:3306"
+    expose:
+      - "3307"
+
+  mysql-inventory: # MySQL service for inventory-service
+    image: mysql:latest
+    container_name: mysql-inventory
+    environment:
+      MYSQL_ROOT_PASSWORD: toto123
+      MYSQL_DATABASE: inventory-service
+    ports:
+      - "3309:3309"
+    expose:
+      - "3309"
